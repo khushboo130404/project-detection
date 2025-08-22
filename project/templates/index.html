@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>ESP32-CAM · YOLOv8 · OCR · TTS</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 20px; }
+    .row { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
+    .card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,.04); }
+    label { display:block; font-size: 14px; margin-bottom: 6px; color:#374151; }
+    input[type=text]{ width: 320px; padding:8px; border-radius:8px; border:1px solid #d1d5db; }
+    button{ padding:10px 14px; border-radius:10px; border:0; background:#111827; color:white; cursor:pointer;}
+    button:disabled{ opacity:.6; cursor:not-allowed; }
+    .toggle { display:flex; gap:10px; align-items:center; }
+    .muted { color:#6b7280; font-size:12px; }
+    img { border-radius: 12px; max-width: 100%; height: auto; }
+    audio { width: 100%; }
+  </style>
+</head>
+<body>
+  <h2>ESP32-CAM Live · YOLOv8 Detection · OCR · TTS</h2>
+
+  <div class="row">
+    <div class="card">
+      <label>ESP32 Base URL (from Serial Monitor)</label>
+      <input id="base" type="text" placeholder="e.g. http://192.168.1.45">
+      <div class="toggle" style="margin-top:8px">
+        <input id="use_stream" type="checkbox" checked>
+        <span>Use <code>/stream</code> (uncheck to use <code>/capture</code>)</span>
+      </div>
+      <div style="margin-top:10px">
+        <button id="saveSource">Save Source</button>
+      </div>
+      <div class="muted" style="margin-top:8px">
+        Tip: The Arduino example usually exposes <code>/stream</code> and <code>/capture</code> on the printed IP.
+      </div>
+    </div>
+
+    <div class="card">
+      <label>Options</label>
+      <div class="toggle"><input id="ocr" type="checkbox" checked><span>Enable OCR</span></div>
+      <div class="toggle"><input id="tts" type="checkbox" checked><span>Enable TTS</span></div>
+      <div style="margin-top:6px">
+        <label class="muted">TTS Mode</label>
+        <select id="tts_mode">
+          <option value="both" selected>Objects + OCR</option>
+          <option value="objects">Objects only</option>
+          <option value="ocr">OCR only</option>
+        </select>
+      </div>
+      <div style="margin-top:6px">
+        <label class="muted">Inference Stride (bigger = fewer detections)</label>
+        <input id="stride" type="number" min="1" max="10" value="3" style="width:80px">
+      </div>
+      <div style="margin-top:10px">
+        <button id="saveOptions">Save Options</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <label>Annotated Stream</label>
+    <img id="stream" src="/video_feed" alt="video stream">
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <label>TTS Audio</label>
+    <audio id="player" controls preload="auto">
+      <source id="audiosrc" src="/static/tts.mp3" type="audio/mpeg">
+      Your browser does not support the audio element.
+    </audio>
+    <div class="muted">Audio will refresh automatically when new speech is generated.</div>
+  </div>
+
+  <script>
+    const saveSourceBtn = document.getElementById('saveSource');
+    const saveOptionsBtn = document.getElementById('saveOptions');
+
+    saveSourceBtn.onclick = async () => {
+      const base = document.getElementById('base').value.trim();
+      const use_stream = document.getElementById('use_stream').checked;
+      if (!base) { alert("Please enter ESP32 Base URL (e.g., http://192.168.1.45)"); return; }
+      saveSourceBtn.disabled = true;
+      try {
+        await fetch('/set_source', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ base, use_stream })
+        });
+        // force-reload the MJPEG img
+        document.getElementById('stream').src = '/video_feed?ts=' + Date.now();
+      } catch (e) {
+        alert('Failed to set source: ' + e);
+      } finally {
+        saveSourceBtn.disabled = false;
+      }
+    };
+
+    saveOptionsBtn.onclick = async () => {
+      const ocr_enabled = document.getElementById('ocr').checked;
+      const tts_enabled = document.getElementById('tts').checked;
+      const tts_mode = document.getElementById('tts_mode').value;
+      const inference_stride = parseInt(document.getElementById('stride').value || "3", 10);
+      saveOptionsBtn.disabled = true;
+      try {
+        await fetch('/set_options', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ ocr_enabled, tts_enabled, tts_mode, inference_stride })
+        });
+      } catch (e) {
+        alert('Failed to save options: ' + e);
+      } finally {
+        saveOptionsBtn.disabled = false;
+      }
+    };
+
+    // Poll TTS timestamp and refresh audio if changed
+    let lastTs = 0;
+    async function pollTTS() {
+      try {
+        const r = await fetch('/tts_timestamp');
+        const j = await r.json();
+        if (j.ts && j.ts !== lastTs) {
+          lastTs = j.ts;
+          const src = document.getElementById('audiosrc');
+          src.src = '/static/tts.mp3?ts=' + Date.now(); // bust cache
+          const player = document.getElementById('player');
+          player.pause();
+          player.load();
+          // optionally autoplay:
+          // player.play().catch(()=>{});
+        }
+      } catch (e) {}
+    }
+    setInterval(pollTTS, 1500);
+  </script>
+</body>
+</html>
